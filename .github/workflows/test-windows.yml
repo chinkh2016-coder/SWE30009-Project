@@ -9,11 +9,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
-    # Use the PHP server started on this runner.
+    # The PHP server serves index.php from the repository root.
     env:
       AI_GATEWAY_URL: http://127.0.0.1:8000/index.php
 
     steps:
+      # Make the PHP files, Python script, and CSV available on the runner.
       - name: Check out repository
         uses: actions/checkout@v6
 
@@ -23,35 +24,52 @@ jobs:
         with:
           python-version: '3.14'
 
+      # Install Selenium, pytest, and pytest-html from the project list.
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
-      # Use PowerShell to start PHP on Windows and check that the page loads.
-      - name: Start PHP server
+      # Start PHP and keep it running throughout the browser tests.
+      - name: Start PHP server and run Selenium tests
         shell: pwsh
         run: |
-          $php = (Get-Command php.exe -ErrorAction Stop).Source
-          Start-Process -FilePath $php -ArgumentList '-S', '127.0.0.1:8000', '-t', '.' `
-            -RedirectStandardOutput 'php-server.log' `
-            -RedirectStandardError 'php-server-error.log'
-
-          for ($attempt = 1; $attempt -le 15; $attempt++) {
-            try {
-              Invoke-WebRequest -Uri $env:AI_GATEWAY_URL -TimeoutSec 3 -ErrorAction Stop | Out-Null
-              exit 0
-            } catch {
-              Start-Sleep -Seconds 1
-            }
-          }
-
-          Get-Content php-server-error.log
-          throw 'The PHP server did not respond.'
-
-      # Put the runner's ChromeDriver on PATH for the existing Selenium script.
-      - name: Run Selenium tests
-        shell: pwsh
-        run: |
+          # Use the ChromeDriver installed on the Windows runner.
           $env:PATH = "$env:CHROMEWEBDRIVER;$env:PATH"
           chromedriver.exe --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pytest test_ai_gateway.py -v -s
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $php = (Get-Command php.exe -ErrorAction Stop).Source
+          $server = Start-Process -FilePath $php `
+            -ArgumentList '-S', '127.0.0.1:8000', '-t', '.' `
+            -RedirectStandardOutput 'php-server.log' `
+            -RedirectStandardError 'php-server-error.log' `
+            -PassThru
+
+          try {
+            # Wait for the dashboard to respond before running pytest.
+            $ready = $false
+            for ($attempt = 1; $attempt -le 15; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri $env:AI_GATEWAY_URL -TimeoutSec 3 -ErrorAction Stop | Out-Null
+                $ready = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+
+            if (-not $ready) {
+              Get-Content php-server-error.log
+              throw 'The PHP server did not respond.'
+            }
+
+            # Run the same ten CSV test cases as the Ubuntu workflow.
+            python -m pytest test_ai_gateway.py -v -s
+            $testExitCode = $LASTEXITCODE
+          } finally {
+            # Clean up the PHP process even when a test fails.
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+          }
+
+          exit $testExitCode
