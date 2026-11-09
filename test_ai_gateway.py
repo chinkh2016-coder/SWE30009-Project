@@ -1,4 +1,5 @@
 import csv
+import os
 import time
 from datetime import datetime
 from decimal import Decimal
@@ -7,16 +8,19 @@ from pathlib import Path
 import pytest
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 # Locate the CSV file relative to this script.
 BASE_DIR = Path(__file__).resolve().parent
 CSV_FILE = BASE_DIR / "test_suite.csv"
 
-# Address of the current AI Gateway dashboard.
-URL = "http://localhost/ai_gateway/index.php"
+# Use the workflow URL in CI and the XAMPP URL on the Mac.
+URL = os.getenv(
+    "AI_GATEWAY_URL",
+    "http://localhost/ai_gateway/index.php",
+)
 
 
 def read_test_cases():
@@ -24,7 +28,7 @@ def read_test_cases():
     with CSV_FILE.open(
         mode="r",
         newline="",
-        encoding="utf-8-sig"
+        encoding="utf-8-sig",
     ) as file:
         return list(csv.DictReader(file))
 
@@ -40,18 +44,15 @@ class TestAIGatewayCalculation:
 
         # Save each run in a separate folder.
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-
-        cls.scr_dir = (
-            BASE_DIR
-            / "screenshots_ai_gateway"
-            / timestamp
-        )
-
+        cls.scr_dir = BASE_DIR / "screenshots_ai_gateway" / timestamp
         cls.scr_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use installed Chrome on macOS.
-        # Selenium manages the appropriate ChromeDriver.
+        # Selenium manages ChromeDriver for the installed Chrome.
         options = webdriver.ChromeOptions()
+
+        # Run Chrome without a desktop window in GitHub Actions.
+        if os.getenv("CI") == "true":
+            options.add_argument("--headless")
 
         cls.driver = webdriver.Chrome(options=options)
         cls.driver.set_window_size(1440, 1100)
@@ -73,10 +74,7 @@ class TestAIGatewayCalculation:
     @pytest.mark.parametrize(
         "test_case",
         TEST_CASES,
-        ids=[
-            f"TC{int(row['ID']):02d}"
-            for row in TEST_CASES
-        ]
+        ids=[f"TC{int(row['ID']):02d}" for row in TEST_CASES],
     )
     def test_usage_calculation(self, test_case):
         """Enter model usage and verify the final total."""
@@ -94,13 +92,10 @@ class TestAIGatewayCalculation:
         try:
             # Return to the input page before every test case.
             self.driver.get(URL)
-
             wait = WebDriverWait(self.driver, 10)
 
             wait.until(
-                EC.visibility_of_element_located(
-                    (By.ID, "usage_model1")
-                )
+                EC.visibility_of_element_located((By.ID, "usage_model1"))
             )
 
             # Enter usage and Batch API settings for eight models.
@@ -109,13 +104,10 @@ class TestAIGatewayCalculation:
                 batch_value = test_case[f"batch{number}"]
 
                 if batch_value not in ("0", "1"):
-                    raise ValueError(
-                        f"batch{number} must be 0 or 1."
-                    )
+                    raise ValueError(f"batch{number} must be 0 or 1.")
 
                 usage_field = self.driver.find_element(
-                    By.ID,
-                    f"usage_model{number}"
+                    By.ID, f"usage_model{number}"
                 )
 
                 # Remove the default zero before entering a value.
@@ -123,10 +115,8 @@ class TestAIGatewayCalculation:
                 usage_field.send_keys(usage)
 
                 batch_checkbox = self.driver.find_element(
-                    By.ID,
-                    f"batch_model{number}"
+                    By.ID, f"batch_model{number}"
                 )
-
                 should_be_checked = batch_value == "1"
 
                 if batch_checkbox.is_selected() != should_be_checked:
@@ -145,32 +135,25 @@ class TestAIGatewayCalculation:
             time.sleep(1.5)
 
             submit_button = wait.until(
-                EC.element_to_be_clickable(
-                    (By.NAME, "submit_button")
-                )
+                EC.element_to_be_clickable((By.NAME, "submit_button"))
             )
-
             submit_button.click()
 
             # Wait for the final total on the result page.
             total_element = wait.until(
-                EC.visibility_of_element_located(
-                    (By.ID, "total_amount")
-                )
+                EC.visibility_of_element_located((By.ID, "total_amount"))
             )
-
             computed_value = Decimal(
                 total_element.text.strip().replace(",", "")
             )
 
-            print(f"Actual total   = RM {computed_value:.2f}")
+            print(f"Actual total    = RM {computed_value:.2f}")
 
             # Show the final total before capturing the page.
             self.driver.execute_script(
                 "arguments[0].scrollIntoView({block: 'center'});",
-                total_element
+                total_element,
             )
-
             time.sleep(1.5)
 
             # Compare against the independently calculated CSV value.
@@ -182,58 +165,34 @@ class TestAIGatewayCalculation:
 
         except AssertionError:
             print(f"{test_case_id}: FAIL")
-
-            self.custom_take_screenshot(
-                test_case_id,
-                "fail"
-            )
-
-            # Allow pytest to record the failed assertion.
+            self.custom_take_screenshot(test_case_id, "fail")
             raise
 
         except Exception as error:
             print(f"{test_case_id}: ERROR")
             print(f"{type(error).__name__}: {error}")
-
-            self.custom_take_screenshot(
-                test_case_id,
-                "error"
-            )
-
-            # Record the exception and continue with other test cases.
+            self.custom_take_screenshot(test_case_id, "error")
             raise
 
         else:
             print(f"{test_case_id}: PASS")
-
-            self.custom_take_screenshot(
-                test_case_id,
-                "pass"
-            )
+            self.custom_take_screenshot(test_case_id, "pass")
 
     def custom_take_screenshot(self, test_case_id, status):
         """Save a screenshot identified by test case and status."""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-
-        filename = (
-            f"{test_case_id}_{timestamp}_{status}.png"
-        )
-
+        filename = f"{test_case_id}_{timestamp}_{status}.png"
         screenshot_path = self.scr_dir / filename
 
         try:
-            saved = self.driver.save_screenshot(
-                str(screenshot_path)
-            )
+            saved = self.driver.save_screenshot(str(screenshot_path))
 
             if saved:
                 print(f"Screenshot saved: {screenshot_path}")
 
                 # Keep the path available for a reporting hook.
-                self._last_screenshot[status] = str(
-                    screenshot_path
-                )
+                self._last_screenshot[status] = str(screenshot_path)
             else:
                 print("Screenshot could not be saved.")
 
