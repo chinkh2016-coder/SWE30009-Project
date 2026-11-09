@@ -1,0 +1,51 @@
+name: AI Gateway Tests on Ubuntu
+
+# Allow the workflow to be started manually from the Actions tab.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # The PHP files are at the repository root.
+    env:
+      AI_GATEWAY_URL: http://127.0.0.1:8000/index.php
+
+    steps:
+      # Make the PHP files, test script, and CSV available on the runner.
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      # Install Selenium, pytest, and pytest-html from the project list.
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      # Check the installed tools. Selenium manages ChromeDriver at test startup.
+      - name: Check PHP and Chrome
+        run: |
+          php --version
+          google-chrome --version
+
+      # Start PHP in the background and wait until the dashboard responds.
+      - name: Start PHP server
+        run: |
+          php -S 127.0.0.1:8000 -t . > php-server.log 2>&1 &
+          for attempt in {1..15}; do
+            if curl --fail --silent --output /dev/null "$AI_GATEWAY_URL"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat php-server.log
+          exit 1
+
+      # Run the same ten CSV test cases used for the Core Tasks.
+      - name: Run Selenium tests
+        run: python -m pytest test_ai_gateway.py -v -s
