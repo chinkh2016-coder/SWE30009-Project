@@ -1,0 +1,57 @@
+name: AI Gateway Tests on Windows
+
+# Start this workflow manually from the Actions tab.
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    # Use the PHP server started on this runner.
+    env:
+      AI_GATEWAY_URL: http://127.0.0.1:8000/index.php
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # Use the same Python version series as the Ubuntu workflow.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      # Use PowerShell to start PHP on Windows and check that the page loads.
+      - name: Start PHP server
+        shell: pwsh
+        run: |
+          $php = (Get-Command php.exe -ErrorAction Stop).Source
+          Start-Process -FilePath $php -ArgumentList '-S', '127.0.0.1:8000', '-t', '.' `
+            -RedirectStandardOutput 'php-server.log' `
+            -RedirectStandardError 'php-server-error.log'
+
+          for ($attempt = 1; $attempt -le 15; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $env:AI_GATEWAY_URL -TimeoutSec 3 -ErrorAction Stop | Out-Null
+              exit 0
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+
+          Get-Content php-server-error.log
+          throw 'The PHP server did not respond.'
+
+      # Put the runner's ChromeDriver on PATH for the existing Selenium script.
+      - name: Run Selenium tests
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:CHROMEWEBDRIVER;$env:PATH"
+          chromedriver.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest test_ai_gateway.py -v -s
