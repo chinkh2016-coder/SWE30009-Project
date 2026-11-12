@@ -1,6 +1,6 @@
 name: AI Gateway Tests on Ubuntu
 
-# Allow the workflow to be started manually from the Actions tab.
+# Start this workflow manually from the Actions tab.
 on:
   workflow_dispatch:
 
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    # The PHP files are at the repository root.
+    # The PHP server serves index.php from the repository root.
     env:
       AI_GATEWAY_URL: http://127.0.0.1:8000/index.php
 
@@ -23,17 +23,17 @@ jobs:
         with:
           python-version: '3.14'
 
-      # Install Selenium, pytest, and pytest-html from the project list.
+      # Install Selenium, pytest, and pytest-html.
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
-      # Check the installed tools. Selenium manages ChromeDriver at test startup.
+      # Check the tools provided by the runner. Selenium manages ChromeDriver.
       - name: Check PHP and Chrome
         run: |
           php --version
           google-chrome --version
 
-      # Start PHP in the background and wait until the dashboard responds.
+      # Start PHP and wait until the dashboard is ready.
       - name: Start PHP server
         run: |
           php -S 127.0.0.1:8000 -t . > php-server.log 2>&1 &
@@ -46,6 +46,17 @@ jobs:
           cat php-server.log
           exit 1
 
-      # Run the same ten CSV test cases used for the Core Tasks.
-      - name: Run Selenium tests
-        run: python -m pytest test_ai_gateway.py -v -s
+      # Run the CSV test suite and generate a standalone HTML report.
+      - name: Run Selenium tests and generate HTML report
+        run: python -m pytest test_ai_gateway.py -v -s --html=report_ai_gateway.html --self-contained-html
+
+      # Keep the report and screenshots available even when tests fail.
+      - name: Upload Ubuntu test report
+        if: ${{ success() || failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-gateway-report-ubuntu
+          path: |
+            report_ai_gateway.html
+            screenshots_ai_gateway/
+          if-no-files-found: error
